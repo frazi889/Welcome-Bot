@@ -1,26 +1,38 @@
 import os
 import logging
+import asyncio
 from datetime import datetime, timezone
 
 from flask import Flask, request
 from telegram import Update
 from telegram.constants import ChatMemberStatus
-from telegram.ext import Application, ChatMemberHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    ChatMemberHandler,
+    CommandHandler,
+    ContextTypes,
+)
 
 # =========================
-# CONFIG
+# ENV
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROUP_NAME = os.getenv("GROUP_NAME", "Gp Name")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 
 PORT = int(os.getenv("PORT", "10000"))
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL")  # Render auto set
+BASE_URL = os.getenv("RENDER_EXTERNAL_URL")
 
-if not BOT_TOKEN or not WEBHOOK_SECRET:
-    raise RuntimeError("Missing BOT_TOKEN or WEBHOOK_SECRET")
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN missing")
+
+if not WEBHOOK_SECRET:
+    raise RuntimeError("WEBHOOK_SECRET missing")
+
+if not BASE_URL:
+    raise RuntimeError("RENDER_EXTERNAL_URL missing")
 
 WEBHOOK_PATH = f"/webhook/{WEBHOOK_SECRET}"
+WEBHOOK_URL = f"{BASE_URL}{WEBHOOK_PATH}"
 
 # =========================
 # LOG
@@ -53,21 +65,28 @@ def is_member(status):
         ChatMemberStatus.RESTRICTED,
     )
 
+# =========================
+# /start COMMAND
+# =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Hello!\n\n"
+        "👋 Hello! ကြိုဆိုပါတယ်\n\n"
         "🤖 Welcome Bot Activated!\n"
         "━━━━━━━━━━━━━━━\n"
-        "✅ Auto Welcome\n"
-        "✅ Auto Goodbye\n\n"
-        "⚙️ Setup:\n"
-        "1️⃣ Add me to your group\n"
-        "2️⃣ Make me Admin\n\n"
-        "🚀 Ready to go!"
-    ) 
-    
+        "✅ Auto Welcome Message\n"
+        "✅ Auto Goodbye Message\n"
+        "━━━━━━━━━━━━━━━\n\n"
+        "⚙️ အသုံးပြုနည်း\n"
+        "1️⃣ Bot ကို Group ထဲ add လုပ်ပါ\n"
+        "2️⃣ Bot ကို Admin ပေးပါ\n"
+        "3️⃣ Member Join / Leave ဖြစ်တာနဲ့ Auto Message ပို့ပါမယ်\n\n"
+        "❗ IMPORTANT\n"
+        "Bot ကို Admin မပေးရင် အလုပ်မလုပ်ပါ\n\n"
+        "🚀 Ready ဖြစ်ပြီဆိုရင် Group ထဲ add လုပ်လိုက်ပါ!"
+    )
+
 # =========================
-# HANDLER
+# WELCOME / GOODBYE
 # =========================
 async def welcome_left(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cm = update.chat_member
@@ -85,29 +104,32 @@ async def welcome_left(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = ""
 
     if not was and now:
-        text = f'''🎉 "{GROUP_NAME}" မှ ကြိုဆိုပါတယ် 🎉
+        text = f"""🎉 ကြိုဆိုပါတယ် 🎉
 
 🆔 ID - {user.id}
 👤 Username - {format_username(user)}
 ☑️ Name - {format_name(user)}
 🗓️ Date - {format_date()}
 
-😊 Welcome!'''
+😊 Welcome!"""
 
     elif was and not now:
-        text = f'''👋 "{GROUP_NAME}" မှ နုတ်ဆက်ပါတယ်
+        text = f"""👋 နုတ်ဆက်ပါတယ်
 
 🆔 ID - {user.id}
 👤 Username - {format_username(user)}
 ☑️ Name - {format_name(user)}
 🗓️ Date - {format_date()}
 
-😔 Goodbye'''
+😔 Goodbye"""
 
     if text:
         await context.bot.send_message(chat_id, text)
 
-# add handler
+# =========================
+# HANDLERS
+# =========================
+ptb_app.add_handler(CommandHandler("start", start))
 ptb_app.add_handler(ChatMemberHandler(welcome_left, ChatMemberHandler.CHAT_MEMBER))
 
 # =========================
@@ -127,20 +149,17 @@ async def webhook():
 # =========================
 # START
 # =========================
-import asyncio
-
-async def start():
+async def main():
     await ptb_app.initialize()
     await ptb_app.start()
 
-    # set webhook
     await ptb_app.bot.set_webhook(
-        url=f"{BASE_URL}{WEBHOOK_PATH}",
-        allowed_updates=["chat_member"],
+        url=WEBHOOK_URL,
+        allowed_updates=["message", "chat_member"],
         drop_pending_updates=True,
     )
 
-asyncio.run(start())
+asyncio.run(main())
 
 if __name__ == "__main__":
     flask_app.run(host="0.0.0.0", port=PORT)
