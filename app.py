@@ -53,6 +53,19 @@ def is_member(status):
         ChatMemberStatus.RESTRICTED,
     )
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👋 Hello!\n\n"
+        "🤖 Welcome Bot Activated!\n"
+        "━━━━━━━━━━━━━━━\n"
+        "✅ Auto Welcome\n"
+        "✅ Auto Goodbye\n\n"
+        "⚙️ Setup:\n"
+        "1️⃣ Add me to your group\n"
+        "2️⃣ Make me Admin\n\n"
+        "🚀 Ready to go!"
+    ) 
+    
 # =========================
 # HANDLER
 # =========================
