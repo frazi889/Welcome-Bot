@@ -1,9 +1,9 @@
 import os
 import logging
-import asyncio
-from datetime import datetime, timezone
+import threading
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from flask import Flask, request
 from telegram import Update
 from telegram.constants import ChatMemberStatus
 from telegram.ext import (
@@ -13,51 +13,52 @@ from telegram.ext import (
     ContextTypes,
 )
 
-# =========================
-# ENV
-# =========================
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
-
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 PORT = int(os.getenv("PORT", "10000"))
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL")
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN missing")
 
-if not WEBHOOK_SECRET:
-    raise RuntimeError("WEBHOOK_SECRET missing")
+logging.basicConfig(
+    format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
 
-if not BASE_URL:
-    raise RuntimeError("RENDER_EXTERNAL_URL missing")
 
-WEBHOOK_PATH = f"/webhook/{WEBHOOK_SECRET}"
-WEBHOOK_URL = f"{BASE_URL}{WEBHOOK_PATH}"
+# ---------- health server for Render Web Service ----------
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"Bot is running")
 
-# =========================
-# LOG
-# =========================
-logging.basicConfig(level=logging.INFO)
+    def log_message(self, format, *args):
+        return
 
-# =========================
-# APP
-# =========================
-flask_app = Flask(__name__)
-ptb_app = Application.builder().token(BOT_TOKEN).build()
 
-# =========================
-# FUNCTIONS
-# =========================
-def format_name(user):
-    return f"{user.first_name or ''} {user.last_name or ''}".strip() or "No Name"
+def run_health_server():
+    server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
+    logger.info("Health server running on port %s", PORT)
+    server.serve_forever()
 
-def format_username(user):
+
+# ---------- helper functions ----------
+def format_name(user) -> str:
+    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    return full_name or "No Name"
+
+
+def format_username(user) -> str:
     return f"@{user.username}" if user.username else "No Username"
 
-def format_date():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-def is_member(status):
+def format_date() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def is_member(status: str) -> bool:
     return status in (
         ChatMemberStatus.MEMBER,
         ChatMemberStatus.ADMINISTRATOR,
@@ -65,101 +66,81 @@ def is_member(status):
         ChatMemberStatus.RESTRICTED,
     )
 
-# =========================
-# /start COMMAND
-# =========================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
+
+# ---------- commands ----------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = (
         "👋 Hello! ကြိုဆိုပါတယ်\n\n"
         "🤖 Welcome Bot Activated!\n"
         "━━━━━━━━━━━━━━━\n"
         "✅ Auto Welcome Message\n"
         "✅ Auto Goodbye Message\n"
+        "✅ ID / Username / Name / Date ပြပေးမယ်\n"
         "━━━━━━━━━━━━━━━\n\n"
         "⚙️ အသုံးပြုနည်း\n"
         "1️⃣ Bot ကို Group ထဲ add လုပ်ပါ\n"
         "2️⃣ Bot ကို Admin ပေးပါ\n"
         "3️⃣ Member Join / Leave ဖြစ်တာနဲ့ Auto Message ပို့ပါမယ်\n\n"
         "❗ IMPORTANT\n"
-        "Bot ကို Admin မပေးရင် အလုပ်မလုပ်ပါ\n\n"
-        "🚀 Ready ဖြစ်ပြီဆိုရင် Group ထဲ add လုပ်လိုက်ပါ!"
+        "Bot ကို Admin မပေးရင် Join/Leave updates မရနိုင်ပါ\n\n"
+        "🚀 Ready ဖြစ်ပြီဆိုရင် Group ထဲ add လုပ်ပြီး Admin ပေးလိုက်ပါ!"
     )
+    await update.message.reply_text(text)
 
-# =========================
-# WELCOME / GOODBYE
-# =========================
-async def welcome_left(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+# ---------- join / leave handler ----------
+async def welcome_left(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cm = update.chat_member
     if not cm:
         return
 
-    old = cm.old_chat_member.status
-    new = cm.new_chat_member.status
+    old_status = cm.old_chat_member.status
+    new_status = cm.new_chat_member.status
     user = cm.new_chat_member.user
     chat_id = cm.chat.id
 
-    was = is_member(old)
-    now = is_member(new)
+    was_member = is_member(old_status)
+    now_member = is_member(new_status)
 
-    text = ""
+    text = None
 
-    if not was and now:
-        text = f"""🎉 ကြိုဆိုပါတယ် 🎉
-
-🆔 ID - {user.id}
-👤 Username - {format_username(user)}
-☑️ Name - {format_name(user)}
-🗓️ Date - {format_date()}
-
-😊 Welcome!"""
-
-    elif was and not now:
-        text = f"""👋 နုတ်ဆက်ပါတယ်
-
-🆔 ID - {user.id}
-👤 Username - {format_username(user)}
-☑️ Name - {format_name(user)}
-🗓️ Date - {format_date()}
-
-😔 Goodbye"""
+    if not was_member and now_member:
+        text = (
+            "🎉 ကြိုဆိုပါတယ် 🎉\n\n"
+            f"🆔 ID - {user.id}\n"
+            f"👤 Username - {format_username(user)}\n"
+            f"☑️ Name - {format_name(user)}\n"
+            f"🗓️ Date - {format_date()}\n\n"
+            "😊 Welcome!"
+        )
+    elif was_member and not now_member:
+        text = (
+            "👋 နုတ်ဆက်ပါတယ်\n\n"
+            f"🆔 ID - {user.id}\n"
+            f"👤 Username - {format_username(user)}\n"
+            f"☑️ Name - {format_name(user)}\n"
+            f"🗓️ Date - {format_date()}\n\n"
+            "😔 Goodbye"
+        )
 
     if text:
-        await context.bot.send_message(chat_id, text)
+        await context.bot.send_message(chat_id=chat_id, text=text)
 
-# =========================
-# HANDLERS
-# =========================
-ptb_app.add_handler(CommandHandler("start", start))
-ptb_app.add_handler(ChatMemberHandler(welcome_left, ChatMemberHandler.CHAT_MEMBER))
 
-# =========================
-# ROUTES
-# =========================
-@flask_app.get("/")
-def home():
-    return "Bot running"
+def main():
+    threading.Thread(target=run_health_server, daemon=True).start()
 
-@flask_app.post(WEBHOOK_PATH)
-async def webhook():
-    data = request.get_json(force=True)
-    update = Update.de_json(data, ptb_app.bot)
-    await ptb_app.process_update(update)
-    return "ok"
+    app = Application.builder().token(BOT_TOKEN).build()
 
-# =========================
-# START
-# =========================
-async def main():
-    await ptb_app.initialize()
-    await ptb_app.start()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(ChatMemberHandler(welcome_left, ChatMemberHandler.CHAT_MEMBER))
 
-    await ptb_app.bot.set_webhook(
-        url=WEBHOOK_URL,
+    logger.info("Bot starting with polling...")
+    app.run_polling(
         allowed_updates=["message", "chat_member"],
         drop_pending_updates=True,
     )
 
-asyncio.run(main())
 
 if __name__ == "__main__":
-    flask_app.run(host="0.0.0.0", port=PORT)
+    main()
